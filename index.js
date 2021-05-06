@@ -349,6 +349,7 @@ async function retrieveActivities(){
     await logEdisciplinas(driver);
     await fullIter(driver);
     await writeJson();
+    driver.quit(); //End driver
     return;
 }
 
