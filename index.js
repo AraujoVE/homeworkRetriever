@@ -3,6 +3,12 @@ var secretJson = require("./secret.json"); //See secretStruct.json to create you
 var fs = require('fs');
 const { elementIsNotSelected } = require("selenium-webdriver/lib/until");
 
+//discord
+const Discord = require("discord.js");
+const config = require("./config.json");
+const client = new Discord.Client();
+client.login(config.BOT_TOKEN);
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////           Global Variables           ///////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -10,9 +16,160 @@ const { elementIsNotSelected } = require("selenium-webdriver/lib/until");
 var departments = []
 var diciplines = []
 var activityList = {"quizes":[],"assigns":[]};
-var jsonData = {};
+var jsonData = require("./activities.json");
 
 var dateDict = {"jan":0,"fev":1,"mar":2,"abr":3,"mai":4,"jun":5,"jul":6,"ago":7,"set":8,"out":9,"nov":10,"dez":11};
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////////////////////////               Discord               ////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+const prefix = '&';
+
+function getFullTimeName(time,timeName){
+    var addTimeName = time === 1 ? timeName : timeName + "s";
+    var addTimeVal = (time < 10) ? "0" + time : time;
+    return addTimeVal + " " + addTimeName; 
+}
+
+
+function getRemainingTime(endDate){ //Used to calculate remaining time for given activity Date object time
+    var currentTime = new Date();
+    var remainingTime = (endDate.getTime() - currentTime.getTime());
+    var symbol = "";
+    if (remainingTime < 0){
+        symbol = "-";
+        remainingTime *= -1;
+    }
+    var seconds = Math.floor((remainingTime / (1000)) % 60),
+        minutes = Math.floor((remainingTime / (1000 * 60)) % 60),
+        hours = Math.floor((remainingTime / (1000 * 60 * 60)) % 24),
+        days = Math.floor((remainingTime / (1000 * 60 * 60 * 24)) % 7),
+        weeks = Math.floor(remainingTime / (1000 * 60 * 60 * 24*7));
+    
+
+    weeks = getFullTimeName(weeks,"semana");
+    days = getFullTimeName(days,"dia");
+    hours = getFullTimeName(hours,"hora");
+    minutes = getFullTimeName(minutes,"minuto");
+    seconds = getFullTimeName(seconds,"segundo");
+
+
+    var remTimeStr = symbol + " " + weeks + ", " + days + ", " + hours + ", " + minutes + " e " + seconds;
+    console.log(remTimeStr);
+    return remTimeStr;
+}
+
+
+
+
+function listDiciplines(curJsonData){
+    var texts = [];
+    if (Object.keys(curJsonData).length === 0) texts.push('Não há nenhuma diciplina listada');
+    else texts.push('as diciplinas existentes são:\n');
+    for(var diciplines in curJsonData){
+        texts.push('```' + diciplines + '```');
+    }
+    return texts;
+}
+
+function getDiciplineDate(curJsonData,dicipline){
+    var dates = [];
+    var auxArray;
+    var remainingTime;
+    var activitiesTypes = ["assigns","quizes"];
+
+    for(var i = 0;i<activitiesTypes.length;i++){
+        auxArray = curJsonData[dicipline][activitiesTypes[i]];
+        for(var j = 0;j<auxArray.length;j++) dates.push(auxArray[j]);
+    }
+
+    var iter = 0;
+    while(iter < dates.length){
+        remainingTime = getRemainingTime(new Date(dates[iter]["deadline"]));
+        if(remainingTime !== null){
+            dates[iter]["remainingTime"] = remainingTime;
+            iter += 1;
+        }
+        else dates.splice(iter,1);
+    }
+    return dates;
+}
+
+
+function sendDiciplineDates(curJsonData,args){
+    var texts = [];
+    var auxArray = [];
+    var chosenDiciplines = {};
+    var argsSize = args.length;
+    if (Object.keys(curJsonData).length === 0){
+        texts.push('Não há nenhuma diciplina listada');
+        return texts;
+    }
+    if(argsSize === 0){
+        chosenDiciplines = JSON.parse(JSON.stringify(curJsonData));
+    }
+    else{
+        for(var dicipline in curJsonData){
+            for(var i = 0;i<argsSize;i++){
+                if(dicipline.includes(args[i].toUpperCase() + " - ")){
+                    chosenDiciplines[dicipline] = JSON.parse(JSON.stringify(curJsonData[dicipline]));
+                    continue;
+                }
+            }
+        }
+    }
+
+    for(var dicipline in chosenDiciplines){
+        auxArray = getDiciplineDate(curJsonData,dicipline);
+        auxArray.unshift('**' + dicipline + '**');
+        if(auxArray.length !== 1) texts.push(auxArray);
+    }
+
+    if(texts.length === 0){
+        texts.push('Sem nenhuma atividade cadastrada');
+    }
+    else{
+        texts.unshift('As atividades cadastradas são:\n')
+    }
+    return texts;
+}
+
+
+client.on("message", function(message) {
+    if (message.author.bot) return;
+    if (!message.content.startsWith(prefix)) return;
+    const curJsonData = JSON.parse(JSON.stringify(jsonData));
+    const commandBody = message.content.slice(prefix.length);
+    const args = commandBody.split(' ');
+    const command = args.shift().toLowerCase();
+
+    switch (command){
+        case "diciplinas":
+            var texts = listDiciplines(curJsonData);
+            message.reply(texts[0]);
+            for(var i = 1;i<texts.length;i++) message.channel.send(texts[i]);
+            break;
+
+        case "prazos":
+            var texts = sendDiciplineDates(curJsonData,args);
+            message.reply(texts[0]);
+            var msgStr;
+            for(var i = 1;i<texts.length;i++){
+                msgStr = '```\n' + texts[i][0] + '\n';
+                for(var j = 1;j<texts[i].length;j++){
+                    msgStr += texts[i][j]["title"] + ' - Tempo Restante: ' + texts[i][j]["remainingTime"] + '\n'
+                }
+                msgStr += '```';
+                message.channel.send(msgStr);
+            }
+            break;
+
+    }    
+});
+
+
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////////           Base Methods           /////////////////////////////////
@@ -148,6 +305,16 @@ async function getElemAttrByXPathWT(driver,xPathStr,attributeType){ //Used to ge
     }
     return elemAttr;
 }
+async function getElemAttrByXPathTC(driver,xPathStr,attributeType){ //Used to get element attribute, tries once
+    try{
+        var elemAttr = await getElemAttrByXPath(driver,xPathStr,attributeType);
+    }
+    catch{
+        return null;
+    }
+
+    return elemAttr;
+}
 
 
 async function getElemsAttrByXPath(driver,xPathStr,attributeType,waitTime=0){ //Used to get element array attributes
@@ -187,36 +354,6 @@ async function writeJson(){ //Write json file
     });
 }
 
-
-async function getFullTimeName(time,timeName){
-    var addTimeName = time === 1 ? timeName : timeName + "s";
-    var addTimeVal = (time < 10) ? "0" + time : time;
-    return addTimeVal + " " + addTimeName; 
-}
-
-async function getRemainingTime(endDate){ //Used to calculate remaining time for given activity Date object time
-    var currentTime = new Date();
-    var remainingTime = (endDate.getTime() - currentTime.getTime());
-
-    var seconds = Math.floor((remainingTime / (1000)) % 60),
-        minutes = Math.floor((remainingTime / (1000 * 60)) % 60),
-        hours = Math.floor((remainingTime / (1000 * 60 * 60)) % 24),
-        days = Math.floor((remainingTime / (1000 * 60 * 60 * 24)) % 7),
-        weeks = Math.floor(remainingTime / (1000 * 60 * 60 * 24*7));
-    
-
-    weeks = await getFullTimeName(weeks,"semana");
-    days = await getFullTimeName(days,"dia");
-    hours = await getFullTimeName(hours,"hora");
-    minutes = await getFullTimeName(minutes,"minuto");
-    seconds = await getFullTimeName(seconds,"segundo");
-
-
-    var remTimeStr = weeks + ", " + days + ", " + hours + ", " + minutes + " e " + seconds;
-
-    return remTimeStr;
-}
-
 async function fixTimes(time){
     var timeList = String(time).split(", ").slice(1,3).join(" ").split(":").join(" ").split(" ");
     var timeDateType = new Date(Number(timeList[2]),dateDict[timeList[1]],Number(timeList[0]),Number(timeList[3]),Number(timeList[4]));
@@ -237,13 +374,13 @@ async function newActivity(activityTitle,activityType){ //Verify if activity is 
     return true;
 }
 
-async function activityIter(driver,it3,diciplineName,activityType,deadlineXPath){
+async function activityIter(driver,it3,diciplineName,activityType,deadlineXPath,alternativeXPath=null){
     await openWindow(driver,activityList[activityType][it3]);
 
     var activityTitle = await getElemAttrByXPathWT(driver,"//h2","innerHTML"); //Get activity title
     if(await newActivity(activityTitle,activityType) === true){
-        var deadlineStr = await getElemAttrByXPathWT(driver,deadlineXPath,"innerHTML");
-        
+        var deadlineStr = await getElemAttrByXPathTC(driver,deadlineXPath,"innerHTML");
+        if(deadlineStr === null) deadlineStr = await getElemAttrByXPathWT(driver,alternativeXPath,"innerHTML");
         var deadline = await fixTimes(deadlineStr); //Adjust taken date
         
         //Add activity to the json
@@ -267,10 +404,11 @@ async function diciplinesIter(driver,it2){
     var quizList = await getElemsAttrByXPathWT(driver,"//a[.//img[contains(@src,'quiz')]]","href"); //Get all quizes elements
     var assignList = await getElemsAttrByXPathWT(driver,"//a[.//img[contains(@src,'assign')]]","href"); //Get all assigns elements
 
+    var diciplineName = await getElemAttrByXPathWT(driver,"//h1","innerHTML"); 
+    if(!(diciplineName in jsonData)) jsonData[diciplineName] = {"assigns":[],"quizes":[]};
+
     if(quizList.length > 0 || assignList.length > 0){
         //Find if dicipline is already listed
-        var diciplineName = await getElemAttrByXPathWT(driver,"//h1","innerHTML"); 
-        if(!(diciplineName in jsonData)) jsonData[diciplineName] = {"assigns":[],"quizes":[]};
 
         activityList["quizes"] = quizList;
         activityList["assigns"] = assignList;
@@ -281,7 +419,7 @@ async function diciplinesIter(driver,it2){
         for(it3 = 0;it3<quizList.length;it3++){
             iter += 1;
             console.log("\t\tActivities ",iter,"/",maxIt);
-            await activityIter(driver,it3,diciplineName,"quizes","//p[contains(.,'O questionário será fechado em')]");
+            await activityIter(driver,it3,diciplineName,"quizes","//p[contains(.,'O questionário será fechado em')]","//p[contains(.,'Este questionário foi encerrado em')]");
         }
         //Iterate through all diciplines assigns
         for(it3 = 0;it3<assignList.length;it3++){
@@ -335,22 +473,27 @@ async function logEdisciplinas(driver){ //Login in E-disciplinas website
 async function manageWindow(driver){ //Maximize window
     await driver.manage().window().maximize();
 }
-
+/*
 function readJson() { //Read json file
     jsonData = JSON.parse(fs.readFileSync('activities.json'));
     return;
 }
+*/
 
 
-async function retrieveActivities(){
-    readJson();
+async function retrieveActivities(waitTime){
     let driver = await new Builder().forBrowser("firefox").build(); //Initialize driver
     await manageWindow(driver);
     await logEdisciplinas(driver);
     await fullIter(driver);
     await writeJson();
     driver.quit(); //End driver
+    await wait(waitTime);
     return;
 }
 
-retrieveActivities();
+async function mainRoutine(){
+    while(true) await retrieveActivities(3600);
+}
+
+mainRoutine();
